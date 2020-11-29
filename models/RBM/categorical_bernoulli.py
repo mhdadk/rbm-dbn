@@ -27,177 +27,111 @@ class RBM(torch.nn.Module):
         
         self.num_categories = num_categories
         
-        # initialize W matrix and register it as a parameter. Note that
-        # since visible units are categorical, then there is a weight
-        # vector associated with each visible unit, and equivalently a
-        # weight matrix associated with all visible units in the RBM
+        # initialize W matrix and register it as a parameter
         
-        W = torch.empty(num_categories,num_hidden,num_visible)
+        W = torch.empty(num_visible,num_categories,num_hidden)
         torch.nn.init.normal_(W, mean = 0.0, std = 0.01)
-        #torch.nn.init.xavier_uniform_(W, gain=1.0)
         # turn on requires_grad after initialization to avoid including
         # in grad_fn
         self.W = torch.nn.Parameter(W,requires_grad = True)
         
-        # initialize bias vectors and register them as parameters. Note
-        # that there exists a bias vector b for each categorical visible
-        # unit, and equivalently a bias matrix associated with all visible
-        # units in the RBM
+        # initialize bias matrix B and register it as a parameters
         
-        b = torch.empty(num_categories,num_visible,1)
-        torch.nn.init.normal_(b, mean = 0.0, std = 0.01)
-        #torch.nn.init.xavier_uniform_(b, gain=1.0)
+        B = torch.empty(num_visible,num_categories)
+        torch.nn.init.normal_(B, mean = 0.0, std = 0.01)
         # turn on requires_grad after initialization to avoid including
         # in grad_fn
-        self.b = torch.nn.Parameter(b,requires_grad = True)
+        self.B = torch.nn.Parameter(B,requires_grad = True)
         
-        # since the bias vector c is only associated with sampling
-        # Bernoulli hidden units given categorical visible units, then
-        # there is a scalar bias associated with each hidden unit, and
-        # equivalently a bias vector associated with all hidden units
-        # in the RBM
+        # initialize bias vector c and register it as a parameter
         
-        c = torch.empty(num_hidden,1)
+        c = torch.empty(num_hidden)
         torch.nn.init.normal_(c, mean = 0.0, std = 0.01)
-        #torch.nn.init.xavier_uniform_(c, gain=1.0)
         # turn on requires_grad after initialization to avoid including
         # in grad_fn
         self.c = torch.nn.Parameter(c,requires_grad = True)
     
-    def compute_p_h_given_v(self,v):
-        log_p_h_given_v = torch.sum(torch.matmul(self.W,v),dim = 1) + self.c
-        p_h_given_v = torch.sigmoid(log_p_h_given_v)
-        return p_h_given_v
+    def compute_p_V_given_h(self,h):
+        # unsqueeze needed for broadcasting
+        Wh = torch.multiply(self.W, h.unsqueeze(1).unsqueeze(1))
+        Y = torch.sum(Wh,dim = 3) + self.B
+        p_V_given_h = torch.nn.functional.softmax(Y,dim = 2)
+        return p_V_given_h
     
-    def sample_h_given_v(self,v):
-        """
-        given a visible vector v containing categorical random variables
-        in one-hot encoding format, sample a hidden vector h containing
-        Bernoulli random variables
-        """
-        p_h_given_v = self.compute_p_h_given_v(v)
-        
-        h_given_v = torch.zeros_like(p_h_given_v)
-        
-        for i,batch in enumerate(p_h_given_v):
-            dist = torch.distributions.bernoulli.Bernoulli(probs = batch)
-            h_given_v[i] = dist.sample()
-        
-        return h_given_v.detach()
+    def sample_V_given_h(self,h):
+        p_V_given_h = self.compute_p_V_given_h(h)
+        V_given_h = torch.distributions.multinomial.Multinomial(total_count = 1,
+                                                                probs = p_V_given_h).sample()
+        return V_given_h.detach()
     
-    def compute_p_v_given_h(self,h):
-        linears = []
-        for i in range(self.num_categories):
-            linear = torch.matmul(self.W[i].transpose(-2,-1),h) + self.b[i]
-            linears.append(linear.squeeze(dim=-1))
-        log_p_v_given_h = torch.stack(linears,dim = 2)
-        p_v_given_h = torch.nn.functional.softmax(log_p_v_given_h, dim = 2)
-        return p_v_given_h
+    def compute_p_h_given_V(self,V):
+        # unsqueeze needed for broadcasting
+        WV = torch.multiply(self.W.permute(2,0,1),V.unsqueeze(1))
+        q = torch.sum(WV,dim = (2,3)) + self.c
+        p_h_given_V = torch.sigmoid(q)
+        return p_h_given_V
     
-    def sample_v_given_h(self,h):
-        """
-        given a hidden vector h containing Bernoulli random variables,
-        sample a visible vector v containing categorical random variables
-        in one-hot encoding format
-        """
-        
-        # make sure this is a batch_size x num_samples x num_classes array
-        
-        p_v_given_h = self.compute_p_v_given_h(h)
-        
-        v_given_h = torch.zeros_like(p_v_given_h)
-        
-        for i,batch in enumerate(p_v_given_h):
-            dist = torch.distributions.one_hot_categorical.OneHotCategorical(
-                    probs = batch)
-            v_given_h[i] = dist.sample()
-        
-        # need to transpose for later
-        
-        v_given_h = torch.transpose(v_given_h,-2,-1)
-        
-        # need to add last dimension to broadcast matrix multiplication
-        
-        v_given_h = torch.unsqueeze(v_given_h,-1)
-        
-        return v_given_h.detach()
-    
-    def energy_func(self,v,h):
-        
-        # inner summation over num_visible visible units
+    def sample_h_given_V(self,V):
+        p_h_given_V = self.compute_p_h_given_V(V)
+        h_given_V = torch.distributions.bernoulli.Bernoulli(probs = p_h_given_V).sample()
+        return h_given_V.detach()
 
-        first_term_inner = torch.matmul(self.W,v)
+    def energy_func(self,V,h):
         
-        # for matrix multiplication
+        # first term
         
-        h = torch.unsqueeze(h,dim=1)
+        Wh = torch.multiply(self.W,h.unsqueeze(1).unsqueeze(1))
+        WhV = torch.multiply(Wh.permute(0,3,1,2),V.unsqueeze(1))
+        first_term = torch.sum(WhV,dim = (1,2,3))
         
-        # outer summation over num_hidden hidden units
+        # second term
         
-        first_term_outer = torch.matmul(h.transpose(-2,-1),first_term_inner).squeeze()
+        VB = torch.multiply(V,self.B)
+        second_term = torch.sum(VB,dim = (1,2))
         
-        # undo after
+        # third term
         
-        h = torch.squeeze(h,dim=1)
+        third_term = torch.matmul(h,self.c)
         
-        # outer outer summation over num_categories classes. This will return a
-        # batch of first terms
+        # batch of energies
         
-        first_term = -torch.sum(first_term_outer, dim = -1)
-        
-        # inner summation over num_visible visible units
-        
-        second_term_inner = torch.matmul(v.transpose(-2,-1),self.b).squeeze()
-        
-        # outer summation over num_categories classes. This will return a
-        # batch of second terms
-        
-        second_term = -torch.sum(second_term_inner, dim = -1)
-        
-        # this will return a batch of third terms
-        
-        third_term = -torch.matmul(h.transpose(-2,-1),self.c).squeeze()
-        
-        # this is a batch of energies
-        
-        energy = first_term + second_term + third_term
+        energy = -first_term - second_term - third_term
         
         return energy
     
-    def forward(self,v0):
+    def forward(self,V_0):
         
-        # sample hidden value based on training example according to CD
+        # sample hidden vector based on training example according to
+        # contrastive divergence
         
-        h_given_v = self.sample_h_given_v(v0)
-        h_given_v0 = h_given_v.clone().detach()
+        h_given_V = self.sample_h_given_V(V_0)
         
-        # start Gibbs sampling
+        # need this for gradient of log-likelihood function
+        
+        h_given_V_0 = h_given_V.clone().detach()
+        
+        # Gibbs sampling
         
         for _ in range(self.num_sampling_iter):
-            v_given_h = self.sample_v_given_h(h_given_v).to(torch.float)
-            h_given_v = self.sample_h_given_v(v_given_h)
+            V_given_h = self.sample_V_given_h(h_given_V)#.to(torch.float)
+            h_given_V = self.sample_h_given_V(V_given_h)
         
-        # final samples from the joint distribution p(v,h)
-        
-        v = v_given_h
-        h = h_given_v
-        
-        return v,h,h_given_v0
+        return V_given_h,h_given_V,h_given_V_0
     
-    def train_batch(self,x,optimizer,device):
+    def train_batch(self,x,optimizer,loss_func,device):
     
         # move to GPU if available
         
         x = x.to(device)
           
-        # sample batches from p(h|v) and p(v,h)
+        # sample batches from p(V,h) and p(h|V) 
     
-        v,h,h_given_v = self.__call__(x)
+        V,h,h_given_V = self.__call__(x)
         
-        # compute energy of batch for first term in gradient of
+        # compute batch of energies for first term in gradient of
         # log-likelihood function log(p(v))
         
-        energy1 = self.energy_func(v,h)
+        energy1 = self.energy_func(V,h)
         
         # sample mean of gradient of energy function is equal to gradient of
         # sample mean of energy function. Note that the same is not necessarily
@@ -205,10 +139,10 @@ class RBM(torch.nn.Module):
         
         mean_energy1 = torch.mean(energy1)
         
-        # compute energy of batch for second term in gradient of
+        # compute batch of energies for second term in gradient of
         # log-likelihood function log(p(v))
         
-        energy2 = self.energy_func(x,h_given_v)
+        energy2 = self.energy_func(x,h_given_V)
         
         # sample mean of gradient of energy function is equal to gradient of
         # sample mean of energy function. Note that the same is not necessarily
@@ -226,23 +160,23 @@ class RBM(torch.nn.Module):
         
         total_mean_energy *= -1
         
-        # compute gradient of log-likelihood with respect to parameters
+        # compute gradients of log-likelihood with respect to parameters
         
         total_mean_energy.backward()
         
-        # compute training MSE reconstruction error
-        
-        mse = torch.mean((x - v)**2).item()
-        
-        # update the RBM parameters
+        # update the RBM parameters using these gradients
         
         optimizer.step()
         
-        # zero the accumulated parameter gradients
+        # zero the accumulated parameter gradients for the next iteration
             
         optimizer.zero_grad()
         
-        return mse
+        # compute batch loss
+        
+        loss = torch.mean((x - v)**2).item()
+        
+        return loss
     
     def train_epoch(self,dataloader,optimizer,device,previous_RBMs):
     
