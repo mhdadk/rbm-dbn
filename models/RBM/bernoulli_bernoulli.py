@@ -5,8 +5,8 @@ import copy
 class RBM(torch.nn.Module):
 
     def __init__(self,
-                 num_visible=784,
-                 num_hidden=500,
+                 num_visible = 25,
+                 num_hidden = 12,
                  num_sampling_iter=2,
                  param_path = 'parameters/RBM0_best_param.pt'):
         
