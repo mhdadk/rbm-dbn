@@ -1,80 +1,54 @@
 import torch
 
-batch_size = 32
-num_visible = 50
-num_hidden = 25
-num_categories = 5
+batch_size = 8
+num_visible = 4 # 50
+num_categories = 5 # 5
+num_hidden = 3 # 25
 
-v = torch.zeros((batch_size,num_categories,num_visible,1))
-h1 = torch.randn(batch_size,num_hidden,1)
+V1 = torch.randn(batch_size,num_visible,num_categories)
+h1 = torch.randn(batch_size,num_hidden)
+W1 = torch.randn(num_visible,num_categories,num_hidden)
+B1 = torch.randn(num_visible,num_categories)
+c1 = torch.randn(num_hidden)
 
-W = torch.randn(num_categories,num_hidden,num_visible)
-b = torch.randn(num_categories,num_visible,1)
-c = torch.randn(num_hidden,1)
+# p(V|h)
 
-def compute_p_v_given_h(h,W,b):
-    linears = []
-    for i in range(num_categories):
-        linear = torch.matmul(W[i].transpose(-2,-1),h) + b[i]
-        linears.append(linear.squeeze(dim=-1))
-    log_p_v_given_h = torch.stack(linears,dim = 2)
-    p_v_given_h = torch.nn.functional.softmax(log_p_v_given_h, dim = 2)
-    return p_v_given_h
+Wh = torch.multiply(W1,h1.unsqueeze(1).unsqueeze(1)) # unsqueeze needed for broadcasting
+Y1 = torch.sum(Wh,dim = 3) + B1
+p_V_given_h = torch.nn.functional.softmax(Y1,dim = 2)
 
-def compute_p_h_given_v(v,W,c):
-    linear = torch.sum(torch.matmul(W,v),dim = 1) + c
-    p_h_given_v = torch.sigmoid(linear)
-    return p_h_given_v
+# sample from p(V|h)
 
-p_v_given_h = compute_p_v_given_h(h1,W,b)
+V_sample = torch.distributions.multinomial.Multinomial(total_count = 1,
+                                                       probs = p_V_given_h).sample()
 
-v_given_h = torch.zeros_like(p_v_given_h)
+# p(h|V)
 
-for i,batch in enumerate(p_v_given_h):
-    dist = torch.distributions.one_hot_categorical.OneHotCategorical(
-            probs = batch)
-    v_given_h[i] = dist.sample()
+WV = torch.multiply(W1.permute(2,0,1),V1.unsqueeze(1)) # unsqueeze needed for broadcasting
+q = torch.sum(WV,dim = (2,3)) + c1
+p_h_given_V = torch.sigmoid(q)
 
-p_h_given_v = compute_p_h_given_v(v,W,c)
+# sample from p(h|V)
 
-h_given_v = torch.zeros_like(p_h_given_v)
+h_sample = torch.distributions.bernoulli.Bernoulli(probs = p_h_given_V).sample()
 
-for i,batch in enumerate(p_h_given_v):
-    dist = torch.distributions.bernoulli.Bernoulli(probs = batch)
-    h_given_v[i] = dist.sample()
+# compute energy function
 
-first_term_inner = torch.matmul(W,v)
+# first term
 
-# for matrix multiplication
+Wh = torch.multiply(W1,h1.unsqueeze(1).unsqueeze(1))
+WhV = torch.multiply(Wh.permute(0,3,1,2),V1.unsqueeze(1))
+first_term = torch.sum(WhV,dim = (1,2,3))
 
-h1 = torch.unsqueeze(h1,dim=1)
+# second term
 
-# outer summation over num_hidden hidden units
+VB = torch.multiply(V1,B1)
+second_term = torch.sum(VB,dim = (1,2))
 
-first_term_outer = torch.matmul(h1.transpose(-2,-1),first_term_inner).squeeze()
+# third term
 
-# undo after
+third_term = torch.matmul(h1,c1)
 
-h1 = torch.squeeze(h1,dim=1)
+# batch of energies
 
-# outer outer summation over num_categories classes. This will return a
-# batch of first terms
-
-first_term = -torch.sum(first_term_outer, dim = -1)
-
-# inner summation over num_visible visible units
-
-second_term_inner = torch.matmul(v.transpose(-2,-1),b).squeeze()
-
-# outer summation over num_categories classes. This will return a
-# batch of second terms
-
-second_term = -torch.sum(second_term_inner, dim = -1)
-
-# this will return a batch of third terms
-
-third_term = -torch.matmul(h1.transpose(-2,-1),c).squeeze()
-
-# this is a batch of energies
-
-energy = first_term + second_term + third_term
+energy = -first_term - second_term - third_term
