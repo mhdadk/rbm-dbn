@@ -1,6 +1,5 @@
 import torch
 import time
-import copy
 
 class RBM(torch.nn.Module):
 
@@ -113,12 +112,12 @@ class RBM(torch.nn.Module):
         # Gibbs sampling
         
         for _ in range(self.num_sampling_iter):
-            V_given_h = self.sample_V_given_h(h_given_V)#.to(torch.float)
+            V_given_h = self.sample_V_given_h(h_given_V)
             h_given_V = self.sample_h_given_V(V_given_h)
         
         return V_given_h,h_given_V,h_given_V_0
     
-    def train_batch(self,x,optimizer,loss_func,device):
+    def train_batch(self,x,optimizer,device):
     
         # move to GPU if available
         
@@ -172,51 +171,11 @@ class RBM(torch.nn.Module):
             
         optimizer.zero_grad()
         
-        # compute batch loss
+        # compute batch reconstruction accuracy
         
-        loss = torch.mean((x - v)**2).item()
+        acc = torch.mean((x == V).to(torch.float)).item()
         
-        return loss
-    
-    def train_epoch(self,dataloader,optimizer,device,previous_RBMs):
-    
-        print('Training...')
-        
-        # to compute total training MSE reconstruction loss over entire epoch
-        
-        total_mse_loss = 0
-        
-        for i,x in enumerate(dataloader):
-            
-            # track progress
-            
-            print('\rProgress: {:.2f}%'.format(i*dataloader.batch_size/
-                                             len(dataloader.dataset)*100),
-                  end='',flush=True)
-            
-            # if training as part of a deep belief network, sample a batch
-            # of hidden vectors from previous RBMs starting from the first
-            # one and use that instead as an input
-            
-            if previous_RBMs is not None:
-                for RBM in previous_RBMs:
-                    x = RBM(x)[1]
-            
-            # train over the batch
-            
-            mse_loss = self.train_batch(x,optimizer,device)
-            
-            
-            
-            # record total loss
-            
-            total_mse_loss += mse_loss
-        
-        # average training loss per sample
-        
-        average_mse_loss = total_mse_loss / len(dataloader.dataset)
-        
-        return average_mse_loss
+        return acc
     
     def val_batch(self,x,device):
     
@@ -226,23 +185,26 @@ class RBM(torch.nn.Module):
             
             x = x.to(device)
               
-            # sample batches from p(h|v) and p(v,h)
+            # sample from p(v,h)
             
-            v,h,h_given_v = self.__call__(x)
+            V = self.__call__(x)[0]
             
-            # validation MSE loss
-            
-            mse = torch.mean((x - v)**2).item()
+            # compute batch reconstruction accuracy
         
-        return mse
+            acc = torch.mean((x == V).to(torch.float)).item()
+        
+        return acc
     
-    def val_epoch(self,dataloader,device,previous_RBMs):
-
-        print('\nValidating...')
+    def run_epoch(self,mode,dataloader,optimizer,device,previous_RBMs):
         
-        # to compute total validation loss over entire epoch
+        if mode == 'train':
+            print('Training...')
+        else:
+            print('\nValidating...')
         
-        total_mse_loss = 0
+        # to compute average reconstruction accuracy per epoch
+        
+        recon_acc = 0
         
         for i,x in enumerate(dataloader):
             
@@ -260,26 +222,26 @@ class RBM(torch.nn.Module):
                 for RBM in previous_RBMs:
                     x = RBM(x)[1]
             
-            # validate over the batch
+            # train/val over the batch and record batch reconstruction
+            # accuracy
             
-            mse_loss = self.val_batch(x,device)
-            
-            # record total loss
-            
-            total_mse_loss += mse_loss
+            if mode == 'train':
+                recon_acc += self.train_batch(x,optimizer,device)
+            else:
+                recon_acc += self.val_batch(x,device)
         
-        # average validation loss per sample
+        # average reconstruction accuracy per sample
         
-        average_mse_loss = total_mse_loss / len(dataloader.dataset)
+        mean_recon_acc = recon_acc / len(dataloader.dataset)
         
-        return average_mse_loss
+        return mean_recon_acc
     
     def train_and_val(self,num_epochs,dataloaders,optimizer,device,
                       previous_RBMs = None):
         
-        # record the best loss across epochs
+        # record the best validation accuracy
         
-        best_val_loss = 1e10
+        best_val_acc = 0
         
         # starting time
     
@@ -297,21 +259,27 @@ class RBM(torch.nn.Module):
             
             # train for an epoch
         
-            train_loss = self.train_epoch(dataloaders['train'],optimizer,
-                                          device,previous_RBMs)
+            train_acc = self.run_epoch(mode = 'train',
+                                       dataloader = dataloaders['train'],
+                                       optimizer = optimizer,
+                                       device = device,
+                                       previous_RBMs = previous_RBMs)
             
             # show results
             
-            print('\nMSE: {:.5f}'.format(train_loss))
+            print('\nTraining Accuracy: {:.2f}%'.format(train_acc*100))
             
             # validate for an epoch
             
-            val_loss = self.val_epoch(dataloaders['val'],device,
-                                      previous_RBMs)
+            val_acc = self.run_epoch(mode = 'val',
+                                     dataloader = dataloaders['val'],
+                                     optimizer = optimizer,
+                                     device = device,
+                                     previous_RBMs = previous_RBMs)
             
             # show results
             
-            print('\nMSE: {:.5f}'.format(val_loss))
+            print('\nValidation Accuracy: {:.2f}%'.format(val_acc*100))
             
             # update learning rate
             
@@ -325,31 +293,52 @@ class RBM(torch.nn.Module):
             
             print('\nEpoch Elapsed Time (HH:MM:SS): ' + epoch_time)
             
-            # save the weights for the best validation loss
+            # save the weights for the best validation accuracy
         
-            if val_loss < best_val_loss:
-                
+            if val_acc > best_val_acc:
                 print('Saving checkpoint...')
-                
-                best_val_loss = val_loss
-                
-                # deepcopy needed because a dict is a mutable object
-                
-                best_parameters = copy.deepcopy(self.state_dict())
-                
-                torch.save(best_parameters,self.param_path)
+                best_val_acc = val_acc
+                torch.save(self.state_dict(),self.param_path)
         
         # show training and validation time and best validation accuracy
         
         end = time.time()
         total_time = time.strftime("%H:%M:%S",time.gmtime(end-start))
         print('\nTotal Time Elapsed (HH:MM:SS): ' + total_time)
-        print('Best MSE Loss: {:.5f}'.format(best_val_loss))
+        print('Best Validation Accuracy: {:.2f}'.format(best_val_acc*100))
 
 if __name__ == '__main__':
     
-    rbm = RBM()
-    v = torch.randn(32,5,50,1)
-    v_f,h_f,h_given_v0 = rbm(v)
-    energy = rbm.energy_func(v_f,h_f)    
+    torch.manual_seed(42)
+    use_cuda = torch.cuda.is_available()
+    device = torch.device('cuda' if use_cuda else 'cpu')
+    
+    rbm = RBM().to(device)
+    batch_size = 8
+    num_visible = 50
+    num_categories = 5
+    x = torch.randn(batch_size,num_visible,num_categories).to(device)
+    
+    # test 1
+    
+    V,h,h_given_V0 = rbm(x)
+    
+    # test 2
+    
+    energy = rbm.energy_func(V,h)
+    
+    # test 3
+    
+    optimizer = torch.optim.SGD(params = rbm.parameters(),
+                                lr = 0.01/batch_size,
+                                momentum = 0.9,
+                                weight_decay = 0.001)
+    
+    train_acc = rbm.train_batch(x,optimizer,device)
+    print('\nTraining Accuracy: {:.2f}%'.format(train_acc*100))
+    
+    # test 4
+    
+    val_acc = rbm.val_batch(x,device)
+    print('\nValidation Accuracy: {:.2f}%'.format(val_acc*100))
     
