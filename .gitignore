@@ -2,5 +2,4 @@
 *.pyc
 *ubyte
 *.gz
-*.drawio
 *checkpoint.ipynb
