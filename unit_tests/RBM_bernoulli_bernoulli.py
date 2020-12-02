@@ -30,8 +30,12 @@ h_sample = torch.distributions.bernoulli.Bernoulli(probs = p_h_given_v).sample()
 
 first_term = torch.matmul(b1.T,v1)
 second_term = torch.matmul(c1.T,h1)
-third_term = torch.matmul(v1.T,torch.matmul(W1.T,h1))
+third_term = torch.matmul(v1.transpose(2,1),torch.matmul(W1.T,h1))
 
 # batch of energies
 
 energy = -first_term - second_term - third_term
+
+# remove any extra dimensions
+
+energy = torch.squeeze(energy)
