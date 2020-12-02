@@ -1,28 +1,24 @@
 import torch
 
 batch_size = 8
-num_visible = 4 # 50
-num_categories = 5 # 5
-num_hidden = 3 # 25
+num_visible = 4 # 25
+num_hidden = 3 # 12
 
-V1 = torch.randn(batch_size,num_visible,num_categories)
-h1 = torch.randn(batch_size,num_hidden)
-W1 = torch.randn(num_visible,num_categories,num_hidden)
-B1 = torch.randn(num_visible,num_categories)
-c1 = torch.randn(num_hidden)
+v1 = torch.randn(batch_size,num_visible,1)
+h1 = torch.randn(batch_size,num_hidden,1)
+W1 = torch.randn(num_hidden,num_visible)
+b1 = torch.randn(num_visible,1)
+c1 = torch.randn(num_hidden,1)
 
-# p(V|h)
+# p(v|h)
 
-Wh = torch.multiply(W1,h1.unsqueeze(1).unsqueeze(1)) # unsqueeze needed for broadcasting
-Y1 = torch.sum(Wh,dim = 3) + B1
-p_V_given_h = torch.nn.functional.softmax(Y1,dim = 2)
+p_v_given_h = torch.sigmoid(torch.matmul(W1.T,h1) + b1.unsqueez)
 
-# sample from p(V|h)
+# sample from p(v|h)
 
-V_sample = torch.distributions.multinomial.Multinomial(total_count = 1,
-                                                       probs = p_V_given_h).sample()
+v_sample = torch.distributions.bernoulli.Bernoulli(probs = p_v_given_h).sample()
 
-# p(h|V)
+# p(h|v)
 
 WV = torch.multiply(W1.permute(2,0,1),V1.unsqueeze(1)) # unsqueeze needed for broadcasting
 q = torch.sum(WV,dim = (2,3)) + c1
