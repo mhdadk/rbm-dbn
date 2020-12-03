@@ -1,13 +1,12 @@
 import torch
 import time
-import copy
 
-class RBM(torch.nn.Module):
+class RBM_BB(torch.nn.Module):
 
     def __init__(self,
                  num_visible = 25,
                  num_hidden = 12,
-                 num_sampling_iter=2,
+                 num_sampling_iter = 2,
                  param_path = 'parameters/RBM0_best_param.pt'):
         
         # run nn.Module's constructor
@@ -18,16 +17,14 @@ class RBM(torch.nn.Module):
         
         self.param_path = param_path
         
-        # assign properties
+        # number of iterations of Gibbs sampling/contrastive divergence
         
-        self.num_visible = num_visible
-        self.num_hidden = num_hidden
         self.num_sampling_iter = num_sampling_iter
         
         # initialize W matrix and register it as a parameter
         
         W = torch.empty(num_hidden,num_visible)
-        torch.nn.init.xavier_uniform_(W, gain=1.0)
+        torch.nn.init.normal_(W, mean = 0.0, std = 0.01)
         # turn on requires_grad after initialization to avoid including
         # in grad_fn
         self.W = torch.nn.Parameter(W,requires_grad = True)
@@ -35,82 +32,67 @@ class RBM(torch.nn.Module):
         # initialize bias vectors and register them as parameters
         
         b = torch.empty(num_visible,1)
-        torch.nn.init.xavier_uniform_(b, gain=1.0)
+        torch.nn.init.normal_(b, mean = 0.0, std = 0.01)
         # turn on requires_grad after initialization to avoid including
         # in grad_fn
         self.b = torch.nn.Parameter(b,requires_grad = True)
         
         c = torch.empty(num_hidden,1)
-        torch.nn.init.xavier_uniform_(c, gain=1.0)
+        torch.nn.init.normal_(c, mean = 0.0, std = 0.01)
         # turn on requires_grad after initialization to avoid including
         # in grad_fn
         self.c = torch.nn.Parameter(c,requires_grad = True)
 
-    def sample_h_given_v(self,v):
-        """
-        given a visible vector v, sample a binary random vector h
-        """
-        p_h_given_v = torch.sigmoid(torch.matmul(self.W,v) + self.c)
-        h_given_v = torch.bernoulli(p_h_given_v).detach()
-        return h_given_v
+    def compute_p_h_given_v(self,v):
+        return torch.sigmoid(torch.matmul(self.W,v) + self.c)
 
+    def sample_h_given_v(self,v):
+        p_h_given_v = self.compute_p_h_given_v(v)
+        h_given_v = torch.distributions.bernoulli.Bernoulli(probs = p_h_given_v).sample()
+        return h_given_v.detach()
+    
+    def compute_p_v_given_h(self,h):
+        return torch.sigmoid(torch.matmul(self.W.T,h) + self.b)
+    
     def sample_v_given_h(self,h):
-        p_v_given_h = torch.sigmoid(torch.matmul(self.W.transpose(-2,-1),h) + 
-                                                 self.b)
-        v_given_h = torch.bernoulli(p_v_given_h).detach()
-        return v_given_h
+        p_v_given_h = self.compute_p_v_given_h(h)
+        v_given_h = torch.distributions.bernoulli.Bernoulli(probs = p_v_given_h).sample()
+        return v_given_h.detach()
     
-    def energy_func(self,v,h):
-        """
-        E(v,h) = -b^T v - c^T h - h^T W v
-        """
+    def energy_func(self,v,h):     
+        first_term = torch.matmul(self.b.T,v)
+        second_term = torch.matmul(self.c.T,h)
+        third_term = torch.matmul(v.transpose(2,1),
+                                  torch.matmul(self.W.T,h))
         
-        first_term = -torch.matmul(self.b.transpose(-2,-1),v).squeeze()
-        second_term = -torch.matmul(self.c.transpose(-2,-1),h).squeeze()
-        third_term = -torch.matmul(h.transpose(-2,-1),
-                                   torch.matmul(self.W,v)).squeeze()
+        # batch of energies
         
-        energy = first_term + second_term + third_term
+        energy = -first_term - second_term - third_term
         
-        return energy
-    
-    # def free_energy(self,v):
-    #     """
-    #     Given binary visible units, the free energy is:
+        # remove redundant dimensions
         
-    #     F(v) = -b^{T}v - sum_{i} log(1 + exp(c_i + W_{i}v))
+        return energy.squeeze()
         
-    #     See equation 9 here for details:
-            
-    #     http://deeplearning.net/tutorial/rbm.html
+    def forward(self,v_0):
         
-    #     """
-    #     first_term = -torch.matmul(self.b.transpose(-2,-1),v).squeeze()
-    #     second_term = torch.sum(
-    #                   torch.log(1.0 +
-    #                             torch.exp(torch.matmul(self.W,v) + self.c)),
-    #                   dim = 1).squeeze()
-    #     return -first_term - second_term
-    
-    def forward(self,v0):
+        # sample hidden vector based on training example according to
+        # contrastive divergence
         
-        # sample hidden value based on training example according to CD
+        h_given_v = self.sample_h_given_v(v_0)
         
-        h_given_v = self.sample_h_given_v(v0)
-        h_given_v0 = h_given_v.clone().detach()
+        # need this for gradient of log-likelihood function
         
-        # start Gibbs sampling
+        h_given_v_0 = h_given_v.clone().detach()
+        
+        # Gibbs sampling
         
         for _ in range(self.num_sampling_iter):
             v_given_h = self.sample_v_given_h(h_given_v)
             h_given_v = self.sample_h_given_v(v_given_h)
         
-        # final samples from the joint distribution p(v,h)
+        # return v,h from p(v,h) and h|v from p(h|v)
         
-        v = v_given_h
-        h = h_given_v
-        
-        return v,h,h_given_v0
+        return v_given_h,h_given_v,h_given_v_0
     
     def train_batch(self,x,optimizer,device):
     
@@ -118,7 +100,7 @@ class RBM(torch.nn.Module):
         
         x = x.to(device)
           
-        # sample batches from p(h|v) and p(v,h)
+        # sample batches from p(v,h) and p(h|v) 
     
         v,h,h_given_v = self.__call__(x)
         
@@ -158,57 +140,19 @@ class RBM(torch.nn.Module):
         
         total_mean_energy.backward()
         
-        # compute training MSE reconstruction error
-        
-        mse = torch.mean((x - v)**2).item()
-        
-        # update the RBM parameters
+        # update the RBM parameters using these gradients
         
         optimizer.step()
         
-        # zero the accumulated parameter gradients
+        # zero the accumulated parameter gradients for the next iteration
             
         optimizer.zero_grad()
         
-        return mse
-    
-    def train_epoch(self,dataloader,optimizer,device,previous_RBMs):
-    
-        print('Training...')
+        # compute batch reconstruction accuracy
         
-        # to compute total training MSE reconstruction loss over entire epoch
+        acc = torch.mean((x == v).to(torch.float)).item()
         
-        total_mse_loss = 0
-        
-        for i,x in enumerate(dataloader):
-            
-            # track progress
-            
-            print('\rProgress: {:.2f}%'.format(i*dataloader.batch_size/
-                                             len(dataloader.dataset)*100),
-                  end='',flush=True)
-            
-            # if training as part of a deep belief network, sample a batch
-            # of hidden vectors from previous RBMs starting from the first
-            # one and use that instead as an input
-            
-            if previous_RBMs is not None:
-                for RBM in previous_RBMs:
-                    x = RBM(x)[1]
-            
-            # train over the batch
-            
-            mse_loss = self.train_batch(x,optimizer,device)
-            
-            # record total loss
-            
-            total_mse_loss += mse_loss
-        
-        # average training loss per sample
-        
-        average_mse_loss = total_mse_loss / len(dataloader.dataset)
-        
-        return average_mse_loss
+        return acc
     
     def val_batch(self,x,device):
     
@@ -218,23 +162,26 @@ class RBM(torch.nn.Module):
             
             x = x.to(device)
               
-            # sample batches from p(h|v) and p(v,h)
+            # sample from p(v,h)
             
-            v,h,h_given_v = self.__call__(x)
+            v = self.__call__(x)[0]
             
-            # validation MSE loss
-            
-            mse = torch.mean((x - v)**2).item()
+            # compute batch reconstruction accuracy
         
-        return mse
+            acc = torch.mean((x == v).to(torch.float)).item()
+        
+        return acc
     
-    def val_epoch(self,dataloader,device,previous_RBMs):
-
-        print('\nValidating...')
+    def run_epoch(self,mode,dataloader,optimizer,device,previous_RBMs):
         
-        # to compute total validation loss over entire epoch
+        if mode == 'train':
+            print('Training...')
+        else:
+            print('\nValidating...')
         
-        total_mse_loss = 0
+        # to compute average reconstruction accuracy per epoch
+        
+        recon_acc = 0
         
         for i,x in enumerate(dataloader):
             
@@ -252,26 +199,26 @@ class RBM(torch.nn.Module):
                 for RBM in previous_RBMs:
                     x = RBM(x)[1]
             
-            # validate over the batch
+            # train/val over the batch and record batch reconstruction
+            # accuracy
             
-            mse_loss = self.val_batch(x,device)
-            
-            # record total loss
-            
-            total_mse_loss += mse_loss
+            if mode == 'train':
+                recon_acc += self.train_batch(x,optimizer,device)
+            else:
+                recon_acc += self.val_batch(x,device)
         
-        # average validation loss per sample
+        # average reconstruction accuracy per sample
         
-        average_mse_loss = total_mse_loss / len(dataloader.dataset)
+        mean_recon_acc = recon_acc / len(dataloader.dataset)
         
-        return average_mse_loss
+        return mean_recon_acc
     
     def train_and_val(self,num_epochs,dataloaders,optimizer,device,
                       previous_RBMs = None):
         
-        # record the best loss across epochs
+        # record the best validation accuracy
         
-        best_val_loss = 1e10
+        best_val_acc = 0
         
         # starting time
     
@@ -288,22 +235,28 @@ class RBM(torch.nn.Module):
             epoch_start = time.time()
             
             # train for an epoch
-            
-            train_loss = self.train_epoch(dataloaders['train'],optimizer,
-                                          device,previous_RBMs)
+        
+            train_acc = self.run_epoch(mode = 'train',
+                                       dataloader = dataloaders['train'],
+                                       optimizer = optimizer,
+                                       device = device,
+                                       previous_RBMs = previous_RBMs)
             
             # show results
             
-            print('\nMSE: {:.5f}'.format(train_loss))
+            print('\nTraining Accuracy: {:.2f}%'.format(train_acc*100))
             
             # validate for an epoch
             
-            val_loss = self.val_epoch(dataloaders['val'],device,
-                                      previous_RBMs)
+            val_acc = self.run_epoch(mode = 'val',
+                                     dataloader = dataloaders['val'],
+                                     optimizer = optimizer,
+                                     device = device,
+                                     previous_RBMs = previous_RBMs)
             
             # show results
             
-            print('\nMSE: {:.5f}'.format(val_loss))
+            print('\nValidation Accuracy: {:.2f}%'.format(val_acc*100))
             
             # update learning rate
             
@@ -317,28 +270,57 @@ class RBM(torch.nn.Module):
             
             print('\nEpoch Elapsed Time (HH:MM:SS): ' + epoch_time)
             
-            # save the weights for the best validation loss
+            # save the weights for the best validation accuracy
         
-            if val_loss < best_val_loss:
-                
+            if val_acc > best_val_acc:
                 print('Saving checkpoint...')
-                
-                best_val_loss = val_loss
-                
-                # deepcopy needed because a dict is a mutable object
-                
-                best_parameters = copy.deepcopy(self.state_dict())
-                
-                torch.save(best_parameters,self.param_path)
+                best_val_acc = val_acc
+                torch.save(self.state_dict(),self.param_path)
         
         # show training and validation time and best validation accuracy
         
         end = time.time()
         total_time = time.strftime("%H:%M:%S",time.gmtime(end-start))
         print('\nTotal Time Elapsed (HH:MM:SS): ' + total_time)
-        print('Best MSE Loss: {:.5f}'.format(best_val_loss))
+        print('Best Validation Accuracy: {:.2f}'.format(best_val_acc*100))
 
 if __name__ == '__main__':
     
-    rbm = RBM()
+    torch.manual_seed(42)
+    use_cuda = torch.cuda.is_available()
+    device = torch.device('cuda' if use_cuda else 'cpu')
+    
+    batch_size = 8
+    num_visible = 25
+    num_hidden = 12
+    num_sampling_iter = 2
+    
+    rbm = RBM_BB(num_visible = num_visible,
+                 num_hidden = num_hidden,
+                 num_sampling_iter = num_sampling_iter).to(device)
+    
+    x = torch.randn(batch_size,num_visible,1).to(device)
+    
+    # test 1
+    
+    v,h,h_given_V0 = rbm(x)
+    
+    # test 2
+    
+    energy = rbm.energy_func(v,h)
+    
+    # test 3
+    
+    optimizer = torch.optim.SGD(params = rbm.parameters(),
+                                lr = 0.01/batch_size,
+                                momentum = 0.9,
+                                weight_decay = 0.001)
+    
+    train_acc = rbm.train_batch(x,optimizer,device)
+    print('\nTraining Accuracy: {:.2f}%'.format(train_acc*100))
+    
+    # test 4
+    
+    val_acc = rbm.val_batch(x,device)
+    print('\nValidation Accuracy: {:.2f}%'.format(val_acc*100))
     
