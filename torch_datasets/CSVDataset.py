@@ -34,19 +34,13 @@ class CSVDataset(torch.utils.data.Dataset):
         
         # convert to one-hot encoding
         
-        window = torch.nn.functional.one_hot(window - 1, num_classes = 5)
-        
-        # reshape and reformat for RBM
-        
-        window = torch.transpose(window,-2,-1)
-        window = torch.unsqueeze(window,-1)
-        window = window.to(torch.float)
-        
+        window = torch.nn.functional.one_hot(window - 1).to(torch.float)
+                
         return window
 
 if __name__ == '__main__':
     
-    path = '../../data/projG/data_val.csv'
+    path = '../data/train.csv'
     dataset = CSVDataset(path)
     
     x = dataset[len(dataset)-1]
