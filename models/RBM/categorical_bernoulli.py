@@ -1,7 +1,7 @@
 import torch
 import time
 
-class RBM(torch.nn.Module):
+class RBM_CB(torch.nn.Module):
 
     def __init__(self,
                  num_visible = 50,
@@ -115,6 +115,8 @@ class RBM(torch.nn.Module):
             V_given_h = self.sample_V_given_h(h_given_V)
             h_given_V = self.sample_h_given_V(V_given_h)
         
+        # return V,h from p(V,h) and h|V from p(h|V)
+        
         return V_given_h,h_given_V,h_given_V_0
     
     def train_batch(self,x,optimizer,device):
@@ -171,9 +173,13 @@ class RBM(torch.nn.Module):
             
         optimizer.zero_grad()
         
-        # compute batch reconstruction accuracy
+        # compute batch reconstruction accuracy using mean-field
+        # propagation
         
-        acc = torch.mean((x == V).to(torch.float)).item()
+        p_h_given_V = self.compute_p_h_given_V(V)
+        p_V_given_h = self.compute_p_V_given_h(p_h_given_V)
+        acc = torch.mean(torch.eq(x.argmax(dim=2),
+                                  p_V_given_h.argmax(dim=2)).to(torch.float)).item()
         
         return acc
     
@@ -189,9 +195,13 @@ class RBM(torch.nn.Module):
             
             V = self.__call__(x)[0]
             
-            # compute batch reconstruction accuracy
+            # compute batch reconstruction accuracy using mean-field
+            # propagation
         
-            acc = torch.mean((x == V).to(torch.float)).item()
+            p_h_given_V = self.compute_p_h_given_V(V)
+            p_V_given_h = self.compute_p_V_given_h(p_h_given_V)
+            acc = torch.mean(torch.eq(x.argmax(dim=2),
+                                      p_V_given_h.argmax(dim=2)).to(torch.float)).item()
         
         return acc
     
@@ -232,7 +242,7 @@ class RBM(torch.nn.Module):
         
         # average reconstruction accuracy per sample
         
-        mean_recon_acc = recon_acc / len(dataloader.dataset)
+        mean_recon_acc = recon_acc / len(dataloader)
         
         return mean_recon_acc
     
@@ -313,10 +323,17 @@ if __name__ == '__main__':
     use_cuda = torch.cuda.is_available()
     device = torch.device('cuda' if use_cuda else 'cpu')
     
-    rbm = RBM().to(device)
     batch_size = 8
-    num_visible = 50
-    num_categories = 5
+    num_visible = 50,
+    num_hidden = 25,
+    num_categories = 5,
+    num_sampling_iter = 2
+    
+    rbm = RBM_CB(num_visible = num_visible,
+                 num_hidden = num_hidden,
+                 num_categories = num_categories,
+                 num_sampling_iter = num_sampling_iter).to(device)
+    
     x = torch.randn(batch_size,num_visible,num_categories).to(device)
     
     # test 1
