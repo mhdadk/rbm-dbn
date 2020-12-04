@@ -173,8 +173,7 @@ class RBM_CB(torch.nn.Module):
             
         optimizer.zero_grad()
         
-        # compute batch reconstruction accuracy using mean-field
-        # propagation
+        # compute log-likelihood approximation
         
         p_h_given_V = self.compute_p_h_given_V(V)
         p_V_given_h = self.compute_p_V_given_h(p_h_given_V)
