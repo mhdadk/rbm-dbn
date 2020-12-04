@@ -6,7 +6,10 @@ This repository demonstrates the use of Restricted Boltzmann Machines (RBMs) and
 
 Repository structure:
 
-* `data`: Contains the data used in `.csv` format. `*2.csv` files are extended versions of the `*.csv` files.
+* `data`: Contains the data used in `.csv` format. `*2.csv` files are extended versions of the `*.csv` files. All data in the `.csv` files are in the following format: <A\>,<B\>, <C\>, where:
+  * A is the user number, ranging from 1 to 50 for `*.csv` files and from 1 to 10000 for `*2.csv` files.
+  * B is the movie number, ranging from 1 to 50.
+  * C is the movie rating, ranging from 1 to 5.
 * `diagrams`: Diagrams used for illustration drawn using [diagrams.net](https://www.diagrams.net/).
 * `models`: Contains class definitions for the RBMs and DBN.
 * `parameters`: Where PyTorch `.pt` files will be saved.
