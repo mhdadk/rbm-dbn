@@ -24,18 +24,18 @@ rbm = RBM_CB(num_visible = 50,
 
 # initialize dataloaders
 
-train_path = 'data/train2.csv'
-val_path = 'data/val2.csv'
+train_path = 'data/train.csv'
+val_path = 'data/val.csv'
 dataloaders = {}
 
 # optimize dataloaders with GPU if available
 
-dl_config = {'num_workers': 2, 'pin_memory': True} if use_cuda else {}
+dl_config = {'num_workers': 0, 'pin_memory': True} if use_cuda else {}
 
 # batch sizes for training and validation
 
-train_batch_size = 128
-val_batch_size = 128
+train_batch_size = 32
+val_batch_size = 32
 
 for mode,path,batch_size in [('train',train_path,train_batch_size),
                              ('val',val_path,val_batch_size)]:
@@ -55,7 +55,7 @@ optimizer = torch.optim.SGD(params = rbm.parameters(),
 
 # number of epochs to train and validate for
 
-num_epochs = 10
+num_epochs = 2
 
 """
 need to add this if statement such that the multiprocessing package

@@ -52,3 +52,8 @@ third_term = torch.matmul(h1,c1)
 # batch of energies
 
 energy = -first_term - second_term - third_term
+
+# compute unnormalized probability
+
+for hidden in h1:
+    
