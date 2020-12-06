@@ -6,7 +6,7 @@ This repository demonstrates the use of Restricted Boltzmann Machines (RBMs) and
 
 Repository structure:
 
-* `data`: Contains the data used in `.csv` format. `*2.csv` files are extended versions of the `*.csv` files. All data in the `.csv` files are in the following format: <A\>,<B\>,<C\>, where:
+* `data`: Contains the data used in `.csv` format. `*2.csv` files are extended versions of the `*.csv` files. All data in the `.csv` files are in the following format: `<A>,<B>,<C>`, where:
   * A is the user number, ranging from 1 to 50 for `*.csv` files and from 1 to 10000 for `*2.csv` files.
   * B is the movie number, ranging from 1 to 50.
   * C is the movie rating, ranging from 1 to 5.
